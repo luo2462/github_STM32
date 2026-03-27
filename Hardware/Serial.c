@@ -2,9 +2,14 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+//USART通信
 
+char Serial_RxTextPacket[100];   //接收的文本数据包
+uint8_t Serial_TxPacket[4];  //发送的Hex数组
+uint8_t Serial_RxPacket[4];	 //定义接收Hex数据包数组
 uint8_t Serial_RxData;
 uint8_t Serial_RxFlag;
+uint8_t RxModeState=0;//0无模式，1 Hex，2 Text
 
 void Serial_Init(void)
 {
@@ -110,27 +115,117 @@ void Serial_Printf(char *format,...)
 	Serial_SendString(string);
 }//发送中文有两种方式，编码UTF-8和GB2312，保存关闭再打开
 
-uint8_t Serial_GetRxFlag(void)
-{
-	if(Serial_RxFlag==1)
-	{
-		Serial_RxFlag=0;
-		return 1;
-	}
-	return 0;
-}
 
 uint8_t Serial_GetRxData(void)
 {
 	return Serial_RxData;
+}//返回最近一次收到的字节数据(单数据)
+
+
+void Serial_RxHexStep(uint8_t RxHexData)
+{
+  static uint8_t RxHexState=0;//静态变量，函数进入只会初始化一次0;
+  //函数退出后仍然有效果，不过只能在本函数中使用(os:感觉就是专门用于中断，进入时可以读取上一次残留数据)
+  static uint8_t pRxPacket=0;
+  if (RxHexState==0)
+  {//等待包头
+    if (RxHexData==0xFF&&Serial_RxFlag==0)
+    {
+      RxHexState=1;
+      pRxPacket=0;
+    }
+  }
+  else if(RxHexState==1)
+  {//接收数据
+    Serial_RxPacket[pRxPacket]=RxHexData;
+    pRxPacket++;
+    if (pRxPacket>=4)
+    {
+      pRxPacket=0;
+      RxHexState=2;
+    }
+  }
+  else if(RxHexState==2)
+  {//等待包尾
+    if (RxHexData==0xFE)
+    {
+      RxHexState=0;
+      Serial_RxFlag=1;
+      RxModeState=0;//模式回0
+    }
+  }
 }
+void Serial_RxTextStep(uint8_t RxTextData)
+{
+  static uint8_t RxTextState=0;//静态变量，函数进入只会初始化一次0;
+  //函数退出后仍然有效果，不过只能在本函数中使用(os:感觉就是专门用于中断，进入时可以读取上一次残留数据)
+  static uint8_t pRxTextPacket=0;
+  if (RxTextState==0)
+  {//等待包头
+	  if (RxTextData=='@'&& Serial_RxFlag == 0)
+		{
+		  RxTextState=1;
+		  pRxTextPacket=0;
+		}
+  }
+  else if(RxTextState==1)
+  {//接收数据
+	if (RxTextData == '\r')
+	{
+		RxTextState = 2;
+	}
+	else
+		{
+			Serial_RxTextPacket[pRxTextPacket] = RxTextData;
+			pRxTextPacket ++;
+		}
+  }
+  else if(RxTextState==2)
+  {//等待包尾
+    if (RxTextData=='\n')
+    {
+      RxTextState=0;
+      Serial_RxTextPacket[pRxTextPacket] = '\0';			//将收到的字符数据包添加一个字符串结束标志
+      Serial_RxFlag=1;
+      RxModeState=0;//模式回0
+    }
+  }
+}
+
 
 void USART1_IRQHandler(void)
 {
 	if(USART_GetITStatus(USART1,USART_IT_RXNE)==SET)
 	{
-		Serial_RxData=USART_ReceiveData(USART1);
-		Serial_RxFlag=1;
+		uint8_t RxData=USART_ReceiveData(USART1);
+		if (RxModeState==0)
+		{
+		  if(RxData==0xFF)
+		  {
+			RxModeState=1;
+			Serial_RxHexStep(RxData);
+		  } 
+		  else if(RxData=='@') 
+			  {
+				  RxModeState=2;
+				  Serial_RxTextStep(RxData);
+			  }
+		}
+		else if (RxModeState == 1)
+		{
+			Serial_RxHexStep(RxData);
+		}
+		else if (RxModeState == 2)
+			{
+			  Serial_RxTextStep(RxData);
+			}
 		USART_ClearITPendingBit(USART1,USART_IT_RXNE);
 	}
-}
+}//USART的中断
+
+void Serial_SendPacket(void)
+{
+	Serial_SendByte(0xFF);//发送包头，自己设得，Up选这样的也还不错
+	Serial_SendArray(Serial_TxPacket,4);
+	Serial_SendByte(0xFE);//发送包尾，自己设得，Up选这样的也还不错
+}//发送数据包
