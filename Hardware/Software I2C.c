@@ -78,7 +78,8 @@ void SOFTWAER_I2C_READS_MPU6050_SendByte(uint8_t Byte)
 	uint8_t i;
 	for (i=0;i<8;i++)
 	{
-		SOFTWAER_I2C_READS_MPU6050_W_SDA(Byte & 0x80>>i);
+		SOFTWAER_I2C_READS_MPU6050_W_SDA(!!(Byte & (0x80 >> i)));
+		//两个!可以对数据进行两次逻辑取反，作用是把非0值统一转换为1，即：!!(0) = 0，!!(非0) = 1
 		//数电&知识点(此处在函数中转化为BitAction,具有非0即1的特点，所以最后结果即使是0x80，也会是1)
 		//通过循环右移i位，实现数位运算
 		SOFTWAER_I2C_READS_MPU6050_W_SCL(1);
@@ -98,7 +99,7 @@ uint8_t SOFTWAER_I2C_READS_MPU6050_ReceiveByte(void)
 		{
 			Byte |= (0x80>>i);
 		}
-		SOFTWAER_I2C_READS_MPU6050_W_SCL(1);
+		SOFTWAER_I2C_READS_MPU6050_W_SCL(0);
 	}
 	return Byte;
 }
